@@ -1,0 +1,31 @@
+{
+  "name": "self-healing-locator-framework",
+  "version": "1.0.0",
+  "description": "A sample self-healing locator framework with cache, confidence metrics, DOM fingerprinting, and LLM-ready locator generation.",
+  "type": "module",
+  "scripts": {
+    "demo": "tsx src/demo.ts",
+    "test": "playwright test",
+    "test:headed": "playwright test --headed",
+    "typecheck": "tsc --noEmit",
+    "hyperframes:lint": "npx hyperframes lint tutorial",
+    "hyperframes:inspect": "npx hyperframes inspect tutorial --samples 12",
+    "hyperframes:render": "npx hyperframes render tutorial --output tutorial/renders/self-healing-locator-tutorial.mp4 --quality draft"
+  },
+  "keywords": [
+    "self-healing",
+    "playwright",
+    "appium",
+    "locators",
+    "llm",
+    "automation"
+  ],
+  "author": "MrNewDelhi",
+  "license": "MIT",
+  "devDependencies": {
+    "@playwright/test": "^1.55.1",
+    "@types/node": "^24.0.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0"
+  }
+}
