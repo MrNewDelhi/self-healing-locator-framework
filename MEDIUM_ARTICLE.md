@@ -12,7 +12,7 @@ The flow is still valid. The locator is not.
 
 That distinction matters.
 
-I built a sample self-healing locator cache framework around that idea: keep the test flow unchanged, but make locator resolution adaptive. The framework uses a local cache, DOM fingerprinting, confidence metrics, and the Google Gemini SDK to generate ranked locator candidates when cached locators fail.
+I built a sample self-healing locator cache framework around that idea: keep the test flow unchanged, but make locator resolution adaptive. The framework uses a local cache, DOM fingerprinting, confidence metrics, screenshots for visual context, and the Google Gemini SDK to generate ranked locator candidates when cached locators fail.
 
 The sample repo is here:
 
@@ -81,11 +81,12 @@ The framework follows this flow:
 3. If cached candidates exist, it tries them in confidence order.
 4. If cached locators fail, it scans the visible page.
 5. It extracts DOM snapshots and stable element hashes.
-6. The Google Gemini SDK receives the target name and snapshots.
-7. Gemini returns the top 5 locator candidates with scores and reasons.
-8. The framework validates candidates one by one in the browser.
-9. The first working locator is used.
-10. The cache is updated with confidence metrics.
+6. It captures a screenshot with Playwright and passes that screenshot as visual context.
+7. The Google Gemini SDK receives the target name, synthesized context, and screenshot when needed.
+8. Gemini returns the top 5 locator candidates with scores and reasons.
+9. The framework validates candidates one by one in the browser.
+10. The first working locator is used.
+11. The cache is updated with confidence metrics.
 
 This keeps the system grounded. Gemini suggests candidates, but the automation runtime proves whether a locator actually works.
 
@@ -105,7 +106,7 @@ For a website, the framework can scan the page DOM and collect useful element si
 - class list
 - CSS path
 
-It then creates a stable hash from the element’s shape.
+Instead of sending raw HTML directly, the framework synthesizes it into compact context: visible text, role, attributes, CSS path, and a stable hash. This keeps token usage lower while still giving the model enough structure to reason about the target.
 
 The hash is not meant to be a perfect identity forever. It is a practical fingerprint that helps answer:
 
@@ -113,7 +114,38 @@ The hash is not meant to be a perfect identity forever. It is a practical finger
 
 ## Gemini Locator Generation
 
-The Gemini adapter sends a compact prompt containing the target element name and visible element snapshots.
+The Gemini adapter sends a compact prompt containing the target element name and visible element snapshots. It can also receive a `screenshot` parameter, which gives the model visual context when text and DOM signals are ambiguous.
+
+In this Playwright sample, the screenshot is captured like this:
+
+```ts
+const screenshot = await page.screenshot({ fullPage: false, type: "png" });
+```
+
+The same idea can be implemented in Selenium:
+
+```ts
+const screenshot = await driver.takeScreenshot();
+```
+
+The generator input becomes:
+
+```ts
+{
+  targetName: "login button",
+  snapshots,
+  screenshot: {
+    source: "playwright",
+    mimeType: "image/png",
+    base64: screenshot.toString("base64")
+  }
+}
+```
+
+The retry strategy has two levels:
+
+- text-based generation with Gemini 3.1 Flash
+- vision-based escalation with Gemini 3.1 Pro when screenshot context is needed
 
 It asks Gemini to return exactly five candidates in a structured JSON contract:
 
@@ -179,7 +211,10 @@ On a cache hit:
 On a cache miss:
 
 - scan visible elements
-- send snapshots to Gemini
+- synthesize DOM/accessibility context
+- capture a screenshot for visual context
+- send snapshots to Gemini 3.1 Flash first
+- escalate to Gemini 3.1 Pro with the screenshot when the text pass needs more context
 - generate locator candidates
 - validate them one by one
 - store the winning candidate
@@ -212,7 +247,7 @@ Those are very different problems.
 
 The web case is the easiest version of this idea.
 
-On a website, the whole page DOM can usually be scanned. That means the framework can inspect many possible candidates at once.
+On a website, the whole page DOM can usually be scanned. That means the framework can inspect many possible candidates at once. The raw HTML should be synthesized into a smaller prompt context rather than sent wholesale every time.
 
 Mobile is different.
 
@@ -223,7 +258,8 @@ For mobile, the same methodology still works, but the scan strategy changes:
 - scan the current viewport
 - scroll in controlled chunks
 - collect accessibility snapshots
-- ask Gemini for candidates per viewport
+- pass the accessibility tree and screenshot to Gemini
+- ask Gemini for a bunch of locator candidates per viewport
 - only heal the locator for the intended step
 - do not change the test flow automatically
 

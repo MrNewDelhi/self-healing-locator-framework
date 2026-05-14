@@ -25,6 +25,12 @@ export interface ElementSnapshot {
   hash: string;
 }
 
+export interface VisualContext {
+  mimeType: "image/png" | "image/jpeg";
+  base64: string;
+  source: "playwright" | "selenium" | "appium";
+}
+
 export interface LocatorCacheEntry {
   targetName: string;
   pageKey: string;
@@ -58,5 +64,6 @@ export interface LocatorGenerator {
     page?: Page;
     targetName: string;
     snapshots: ElementSnapshot[];
+    screenshot?: VisualContext;
   }): Promise<LocatorCandidate[]>;
 }

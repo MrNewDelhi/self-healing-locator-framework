@@ -54,8 +54,20 @@ export class SelfHealingLocator {
 
     if (cached) cache.recordMiss(targetName, pageKey);
 
-    const snapshots = await scanVisibleElements(this.page);
-    const generated = await generator.generate({ page: this.page, targetName, snapshots });
+    const [snapshots, screenshotBuffer] = await Promise.all([
+      scanVisibleElements(this.page),
+      this.page.screenshot({ fullPage: false, type: "png" })
+    ]);
+    const generated = await generator.generate({
+      page: this.page,
+      targetName,
+      snapshots,
+      screenshot: {
+        mimeType: "image/png",
+        base64: screenshotBuffer.toString("base64"),
+        source: "playwright"
+      }
+    });
     for (const candidate of generated) {
       attemptedCandidates.push(candidate);
       const locator = this.materialize(candidate);

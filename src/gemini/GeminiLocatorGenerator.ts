@@ -1,26 +1,33 @@
 import { GoogleGenAI, Type } from "@google/genai";
-import type { ElementSnapshot, LocatorCandidate, LocatorGenerator } from "../types.js";
+import type { ElementSnapshot, LocatorCandidate, LocatorGenerator, VisualContext } from "../types.js";
 
 interface GeminiLocatorGeneratorOptions {
   apiKey?: string;
-  model?: string;
+  textModel?: string;
+  visionModel?: string;
   maxSnapshots?: number;
   fallback?: LocatorGenerator;
 }
 
 export class GeminiLocatorGenerator implements LocatorGenerator {
   private readonly ai?: GoogleGenAI;
-  private readonly model: string;
+  private readonly textModel: string;
+  private readonly visionModel: string;
   private readonly maxSnapshots: number;
 
   constructor(private readonly options: GeminiLocatorGeneratorOptions = {}) {
     const apiKey = options.apiKey ?? process.env.GEMINI_API_KEY ?? process.env.GOOGLE_API_KEY;
     this.ai = apiKey ? new GoogleGenAI({ apiKey }) : undefined;
-    this.model = options.model ?? process.env.GEMINI_MODEL ?? "gemini-2.5-flash";
+    this.textModel = options.textModel ?? process.env.GEMINI_TEXT_MODEL ?? process.env.GEMINI_MODEL ?? "gemini-3.1-flash";
+    this.visionModel = options.visionModel ?? process.env.GEMINI_VISION_MODEL ?? "gemini-3.1-pro";
     this.maxSnapshots = options.maxSnapshots ?? 80;
   }
 
-  async generate(input: { targetName: string; snapshots: ElementSnapshot[] }): Promise<LocatorCandidate[]> {
+  async generate(input: {
+    targetName: string;
+    snapshots: ElementSnapshot[];
+    screenshot?: VisualContext;
+  }): Promise<LocatorCandidate[]> {
     if (!this.ai) {
       if (this.options.fallback) return this.options.fallback.generate(input);
       throw new Error("GEMINI_API_KEY or GOOGLE_API_KEY is required to generate self-healing locator candidates.");
@@ -43,25 +50,62 @@ export class GeminiLocatorGenerator implements LocatorGenerator {
         cssPath: snapshot.cssPath
       }));
 
+    const textCandidates = await this.generateWithModel({
+      model: this.textModel,
+      targetName: input.targetName,
+      snapshots
+    });
+
+    if (textCandidates.length > 0 || !input.screenshot) return textCandidates;
+
+    return this.generateWithModel({
+      model: this.visionModel,
+      targetName: input.targetName,
+      snapshots,
+      screenshot: input.screenshot
+    });
+  }
+
+  private async generateWithModel(input: {
+    model: string;
+    targetName: string;
+    snapshots: Pick<ElementSnapshot, "hash" | "tagName" | "text" | "role" | "label" | "placeholder" | "testId" | "id" | "name" | "type" | "classes" | "cssPath">[];
+    screenshot?: VisualContext;
+  }): Promise<LocatorCandidate[]> {
+    if (!this.ai) throw new Error("Gemini client is not configured.");
+
+    const parts = [
+      {
+        text: [
+          "You are a QA automation locator generator.",
+          "Given a target element name and compact visible DOM/accessibility snapshots, return exactly the top 5 locator candidates.",
+          "If a screenshot is attached, use it only as visual context to disambiguate placement, labels, and visible intent.",
+          "Prefer stable, human-meaningful locators in this order: testId, role, label, placeholder, text, css.",
+          "Return only valid JSON matching the schema. Do not include markdown.",
+          "",
+          `Target element: ${input.targetName}`,
+          "",
+          `Snapshots: ${JSON.stringify(input.snapshots)}`
+        ].join("\n")
+      },
+      ...(input.screenshot
+        ? [
+            {
+              inlineData: {
+                mimeType: input.screenshot.mimeType,
+                data: input.screenshot.base64
+              }
+            }
+          ]
+        : [])
+    ];
+
     const response = await this.ai.models.generateContent({
-      model: this.model,
+      model: input.model,
       contents: [
         {
           role: "user",
-          parts: [
-            {
-              text: [
-                "You are a QA automation locator generator.",
-                "Given a target element name and visible DOM/accessibility snapshots, return exactly the top 5 locator candidates.",
-                "Prefer stable, human-meaningful locators in this order: testId, role, label, placeholder, text, css.",
-                "Return only valid JSON matching the schema. Do not include markdown.",
-                "",
-                `Target element: ${input.targetName}`,
-                "",
-                `Snapshots: ${JSON.stringify(snapshots)}`
-              ].join("\n")
-            }
-          ]
+          parts
         }
       ],
       config: {

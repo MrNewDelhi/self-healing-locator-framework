@@ -1,6 +1,6 @@
 # Self-Healing Locator Cache with Google Gemini SDK
 
-This repo demonstrates a self-healing locator cache framework for black-box UI automation. It uses Playwright for the sample website, a local JSON cache for learned locators, DOM fingerprinting for element identity, confidence metrics for observability, and the Google Gemini SDK to generate ranked locator candidates when cached locators fail.
+This repo demonstrates a self-healing locator cache framework for black-box UI automation. It uses Playwright for the runnable sample website, a local JSON cache for learned locators, DOM fingerprinting for element identity, confidence metrics for observability, and the Google Gemini SDK to generate ranked locator candidates when cached locators fail. The generator can also receive a screenshot as visual context, captured by Playwright in this sample.
 
 ![Self-healing locator cache architecture](assets/medium/story-header.png)
 
@@ -16,14 +16,17 @@ This framework does not change the automation flow. It only changes how the targ
 flowchart LR
   A[Test asks for target: login button] --> B[Scan visible DOM]
   B --> C[Create element fingerprints]
-  C --> D{Local locator cache}
-  D -->|cache hit| E[Try cached candidates by confidence]
-  D -->|cache miss| F[Gemini SDK generates top 5 candidates]
-  E -->|fails| F
-  F --> G[Validate candidates in order]
-  G --> H[Use first working locator]
-  H --> I[Update confidence and cache]
-  I --> D
+  C --> D[Capture screenshot with Playwright]
+  D --> E{Local locator cache}
+  E -->|cache hit| F[Try cached candidates by confidence]
+  E -->|cache miss| G[Gemini 3.1 Flash text pass]
+  F -->|fails| G
+  G -->|needs more context| H[Gemini 3.1 Pro vision pass]
+  G --> I[Validate candidates in order]
+  H --> I
+  I --> J[Use first working locator]
+  J --> K[Update confidence and cache]
+  K --> E
 ```
 
 The sample run starts with a broken locator, scans [Sauce Demo](https://www.saucedemo.com/), asks Gemini for locator candidates when needed, validates candidates one by one, then stores the winning locator locally.
@@ -51,9 +54,15 @@ The Gemini adapter lives in [src/gemini/GeminiLocatorGenerator.ts](src/gemini/Ge
 It sends Gemini:
 
 - target element name
-- visible DOM/accessibility snapshots
+- synthesized visible DOM/accessibility snapshots
 - stable element hashes
 - role, text, label, placeholder, id, test id, class, and CSS-path signals
+- optional `screenshot` visual context captured by Playwright in the sample flow
+
+The default retry/escalation path is:
+
+- `gemini-3.1-flash` for the first text-based locator generation pass
+- `gemini-3.1-pro` for the vision-based pass when the text pass cannot produce candidates and a screenshot is available
 
 Gemini returns the top 5 candidates in this contract:
 
@@ -77,6 +86,36 @@ Gemini returns the top 5 candidates in this contract:
 
 The framework then validates candidates in the browser. Gemini suggests; the automation runtime proves.
 
+### Screenshot Context
+
+The `LocatorGenerator` contract includes a `screenshot` parameter:
+
+```ts
+{
+  targetName: "login button",
+  snapshots,
+  screenshot: {
+    source: "playwright",
+    mimeType: "image/png",
+    base64: "..."
+  }
+}
+```
+
+In this repository, screenshots are captured with Playwright:
+
+```ts
+const screenshot = await page.screenshot({ fullPage: false, type: "png" });
+```
+
+The same pattern can be adapted for Selenium:
+
+```ts
+const screenshot = await driver.takeScreenshot();
+```
+
+The screenshot is not used to skip validation. It gives the model more context when text and DOM signals are ambiguous.
+
 ## Run It
 
 ```bash
@@ -93,14 +132,15 @@ The demo writes `.locator-cache.json` locally. Delete it whenever you want to si
 
 ## Web vs Mobile Reality
 
-For websites, the whole page DOM can be scanned and ranked. For Android and iOS through Appium, the accessibility tree is usually limited to the current viewport. If the target element is below the fold or inside an unopened screen, it will not be detected until the automation scrolls or navigates there.
+For websites, the framework can scan the page DOM and synthesize raw HTML into compact locator context so prompts stay smaller. For Android and iOS through Appium, the accessibility tree is usually limited to the current viewport. If the target element is below the fold or inside an unopened screen, it will not be detected until the automation scrolls or navigates there.
 
 Recommended mobile adaptation:
 
 - scan current viewport
 - scroll in controlled chunks
-- collect visible accessibility snapshots
-- ask Gemini for candidates per viewport
+- collect visible accessibility-tree snapshots
+- pass a screenshot plus the accessibility tree to Gemini
+- ask Gemini for a bunch of candidates per viewport
 - never change the test flow, only replace the locator used at the intended step
 
 ## Repository Layout
