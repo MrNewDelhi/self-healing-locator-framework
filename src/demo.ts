@@ -1,5 +1,5 @@
 import { chromium } from "@playwright/test";
-import { LocatorCache, SelfHealingLocator } from "./index.js";
+import { DeterministicLocatorGenerator, GeminiLocatorGenerator, LocatorCache, SelfHealingLocator } from "./index.js";
 import type { LocatorCandidate } from "./types.js";
 
 const brokenSeed: LocatorCandidate = {
@@ -12,7 +12,11 @@ const brokenSeed: LocatorCandidate = {
 const browser = await chromium.launch({ headless: true });
 const page = await browser.newPage();
 const cache = new LocatorCache(".locator-cache.json");
-const healing = new SelfHealingLocator(page, { cache, timeoutMs: 1_200 });
+const healing = new SelfHealingLocator(page, {
+  cache,
+  timeoutMs: 1_200,
+  generator: new GeminiLocatorGenerator({ fallback: new DeterministicLocatorGenerator() })
+});
 
 await page.goto("https://www.saucedemo.com/", { waitUntil: "domcontentloaded" });
 await page.getByPlaceholder("Username").fill("standard_user");

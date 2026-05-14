@@ -55,7 +55,7 @@ export interface ResolutionResult {
 
 export interface LocatorGenerator {
   generate(input: {
-    page: Page;
+    page?: Page;
     targetName: string;
     snapshots: ElementSnapshot[];
   }): Promise<LocatorCandidate[]>;

@@ -1,8 +1,8 @@
-# Self-Healing Locator Framework
+# Self-Healing Locator Cache with Google Gemini SDK
 
-This repo demonstrates a self-healing locator methodology for black-box UI automation. The sample is intentionally simple: it runs against [Sauce Demo](https://www.saucedemo.com/), starts with a broken login-button locator, scans the page, generates the top 5 replacement locator candidates, validates them in order, and updates a local cache with confidence metrics.
+This repo demonstrates a self-healing locator cache framework for black-box UI automation. It uses Playwright for the sample website, a local JSON cache for learned locators, DOM fingerprinting for element identity, confidence metrics for observability, and the Google Gemini SDK to generate ranked locator candidates when cached locators fail.
 
-The idea is framework-agnostic. Playwright is used here because it is fast to test on a website, but the same pattern can sit in Selenium, Cypress, WebdriverIO, Appium, or an internal QA runner.
+![Self-healing locator cache architecture](assets/medium/story-header.png)
 
 ## Problem Scenario
 
@@ -10,22 +10,23 @@ In CMS-driven websites and client-owned black-box products, element changes ofte
 
 This framework does not change the automation flow. It only changes how the target element is found.
 
-## Pipeline
+## How It Works
 
 ```mermaid
 flowchart LR
-  A[Test asks for target: login button] --> B{Cache lookup}
-  B -->|hit| C[Try cached top locators]
-  C -->|works| D[Run same test flow]
-  C -->|fails| E[Scan visible page]
-  B -->|miss| E
-  E --> F[Extract component snapshots]
-  F --> G[LLM or heuristic locator generator]
-  G --> H[Top 5 candidate locators]
-  H --> I[Validate one by one]
-  I -->|first working locator| J[Increase confidence and persist hash]
-  I -->|none work| K[Fail with attempted locator report]
+  A[Test asks for target: login button] --> B[Scan visible DOM]
+  B --> C[Create element fingerprints]
+  C --> D{Local locator cache}
+  D -->|cache hit| E[Try cached candidates by confidence]
+  D -->|cache miss| F[Gemini SDK generates top 5 candidates]
+  E -->|fails| F
+  F --> G[Validate candidates in order]
+  G --> H[Use first working locator]
+  H --> I[Update confidence and cache]
+  I --> D
 ```
+
+The sample run starts with a broken locator, scans [Sauce Demo](https://www.saucedemo.com/), asks Gemini for locator candidates when needed, validates candidates one by one, then stores the winning locator locally.
 
 ## Cache Model
 
@@ -34,19 +35,61 @@ Each cache entry maps:
 - target name, for example `login button`
 - page key, for example `https://www.saucedemo.com/`
 - element hash derived from stable element shape
-- top 5 candidate locators
+- top 5 locator candidates
 - confidence score
 - attempts, successes, failures, cache hits, cache misses
 - last and average resolution time
 
 Confidence rises when a locator works and drops when a cached locator fails. This creates practical metrics instead of a binary pass/fail locator store.
 
-```mermaid
-pie title Locator Resolution Metrics
-  "Cache hits" : 65
-  "Healed misses" : 25
-  "Manual triage" : 10
+![Locator cache pipeline](assets/medium/locator-cache-architecture.png)
+
+## Gemini SDK Integration
+
+The Gemini adapter lives in [src/gemini/GeminiLocatorGenerator.ts](src/gemini/GeminiLocatorGenerator.ts).
+
+It sends Gemini:
+
+- target element name
+- visible DOM/accessibility snapshots
+- stable element hashes
+- role, text, label, placeholder, id, test id, class, and CSS-path signals
+
+Gemini returns the top 5 candidates in this contract:
+
+```ts
+[
+  {
+    strategy: "role",
+    value: "button",
+    name: "Login",
+    score: 0.91,
+    reason: "Accessible role matched the target intent."
+  },
+  {
+    strategy: "css",
+    value: "#login-button",
+    score: 0.88,
+    reason: "Element id was present in the scanned component."
+  }
+]
 ```
+
+The framework then validates candidates in the browser. Gemini suggests; the automation runtime proves.
+
+## Run It
+
+```bash
+npm install
+npx playwright install chromium
+export GEMINI_API_KEY="your-key"
+npm test
+npm run demo
+```
+
+If `GEMINI_API_KEY` is not present, the demo uses a deterministic local fallback so the repository remains runnable in CI. Production usage should set `GEMINI_API_KEY` or `GOOGLE_API_KEY`.
+
+The demo writes `.locator-cache.json` locally. Delete it whenever you want to simulate a cold start.
 
 ## Web vs Mobile Reality
 
@@ -57,37 +100,8 @@ Recommended mobile adaptation:
 - scan current viewport
 - scroll in controlled chunks
 - collect visible accessibility snapshots
-- generate candidate locators per viewport
+- ask Gemini for candidates per viewport
 - never change the test flow, only replace the locator used at the intended step
-
-## Run It
-
-```bash
-npm install
-npx playwright install chromium
-npm test
-npm run demo
-```
-
-The demo writes `.locator-cache.json` locally. Delete it whenever you want to simulate a cold start.
-
-## Optional LLM Integration
-
-`src/llm/HeuristicLocatorGenerator.ts` is intentionally shaped like an LLM adapter. Replace it with a provider that sends:
-
-- the target element name
-- visible component snapshots
-- current page metadata
-- historical cache confidence
-
-The provider should return exactly the same `LocatorCandidate[]` contract:
-
-```ts
-[
-  { strategy: "role", value: "button", name: "Login", score: 0.91, reason: "Accessible role match" },
-  { strategy: "testId", value: "login-button", score: 0.88, reason: "Stable data-test hook" }
-]
-```
 
 ## Repository Layout
 
@@ -96,23 +110,21 @@ src/
   cache/LocatorCache.ts
   dom/fingerprint.ts
   dom/scanPage.ts
-  llm/HeuristicLocatorGenerator.ts
+  gemini/GeminiLocatorGenerator.ts
   SelfHealingLocator.ts
 tests/
   self-healing.spec.ts
-tutorial/
-  index.html
-  DESIGN.md
+assets/
+  medium/story-header.png
+  medium/locator-cache-architecture.png
 ```
 
-## Tutorial Video
-
-The HyperFrames tutorial source lives in `tutorial/`. After dependencies are installed:
+## Validation
 
 ```bash
-npm run hyperframes:lint
-npm run hyperframes:inspect
-npm run hyperframes:render
+npm run typecheck
+npm test
+npm run demo
 ```
 
-The video explains the black-box testing problem, cache hit/miss logic, confidence metrics, and the key web-versus-mobile limitation.
+The Playwright tests verify both a healed stale locator and a second lookup that uses the cache and raises confidence.

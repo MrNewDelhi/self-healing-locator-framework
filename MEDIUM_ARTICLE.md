@@ -1,4 +1,6 @@
-# Building a Self-Healing Locator Framework for Black-Box UI Testing
+# Building a Self-Healing Locator Cache Framework with Google Gemini SDK
+
+![Self-healing locator cache framework](assets/medium/story-header.png)
 
 UI automation rarely fails because the user journey changed.
 
@@ -10,7 +12,7 @@ The flow is still valid. The locator is not.
 
 That distinction matters.
 
-This project explores a lightweight self-healing locator framework that keeps the test flow unchanged, but makes locator resolution adaptive.
+I built a sample self-healing locator cache framework around that idea: keep the test flow unchanged, but make locator resolution adaptive. The framework uses a local cache, DOM fingerprinting, confidence metrics, and the Google Gemini SDK to generate ranked locator candidates when cached locators fail.
 
 The sample repo is here:
 
@@ -68,36 +70,24 @@ await login.locator.click();
 
 The test still clicks the login button. The difference is that locator selection becomes a runtime decision backed by evidence.
 
-## The Pipeline
+## The Gemini-Powered Pipeline
+
+![Locator cache pipeline](assets/medium/locator-cache-architecture.png)
 
 The framework follows this flow:
 
 1. The test asks for a target element, for example `login button`.
-2. The framework checks the local cache.
+2. The framework checks the local locator cache.
 3. If cached candidates exist, it tries them in confidence order.
 4. If cached locators fail, it scans the visible page.
-5. It extracts component snapshots from the DOM.
-6. A locator generator ranks the top 5 candidates.
-7. The framework tries each candidate.
-8. The first working locator is used.
-9. The cache is updated with confidence metrics.
+5. It extracts DOM snapshots and stable element hashes.
+6. The Google Gemini SDK receives the target name and snapshots.
+7. Gemini returns the top 5 locator candidates with scores and reasons.
+8. The framework validates candidates one by one in the browser.
+9. The first working locator is used.
+10. The cache is updated with confidence metrics.
 
-In Mermaid form:
-
-```mermaid
-flowchart LR
-  A[Test asks for target: login button] --> B{Cache lookup}
-  B -->|hit| C[Try cached top locators]
-  C -->|works| D[Run same test flow]
-  C -->|fails| E[Scan visible page]
-  B -->|miss| E
-  E --> F[Extract component snapshots]
-  F --> G[LLM or heuristic locator generator]
-  G --> H[Top 5 locator candidates]
-  H --> I[Validate one by one]
-  I -->|works| J[Increase confidence and persist hash]
-  I -->|none work| K[Fail with attempted locator report]
-```
+This keeps the system grounded. Gemini suggests candidates, but the automation runtime proves whether a locator actually works.
 
 ## What Gets Scanned
 
@@ -121,20 +111,11 @@ The hash is not meant to be a perfect identity forever. It is a practical finger
 
 > Does this candidate still look like the same kind of element we previously used?
 
-## Locator Generation
+## Gemini Locator Generation
 
-In the sample repo, I used a heuristic generator so the project can run without any API key.
+The Gemini adapter sends a compact prompt containing the target element name and visible element snapshots.
 
-The generator looks at the target name and ranks candidates such as:
-
-- role locator
-- test id locator
-- label locator
-- placeholder locator
-- text locator
-- CSS locator
-
-Example output:
+It asks Gemini to return exactly five candidates in a structured JSON contract:
 
 ```ts
 [
@@ -154,20 +135,9 @@ Example output:
 ]
 ```
 
-The important part is the contract.
+That contract is the important part.
 
-The same interface can be backed by an LLM:
-
-```ts
-interface LocatorGenerator {
-  generate(input: {
-    targetName: string;
-    snapshots: ElementSnapshot[];
-  }): Promise<LocatorCandidate[]>;
-}
-```
-
-That means the framework can later send the page component snapshots and target name to an LLM and ask it to return the top 5 locator candidates with scores and reasons.
+The framework does not blindly trust a model response. It loops over candidates, materializes each locator in Playwright, waits for visibility, and only persists the locator that works.
 
 ## Confidence Metrics
 
@@ -187,14 +157,11 @@ Useful metrics include:
 - most unstable pages
 - most frequently healed elements
 
-For example:
+Example resolution outcomes:
 
-```mermaid
-pie title Locator Resolution Outcomes
-  "Cache hits" : 65
-  "Healed misses" : 25
-  "Manual triage" : 10
-```
+- Cache hits: 65%
+- Healed misses: 25%
+- Manual triage: 10%
 
 Over time, this tells you whether your test suite is becoming more resilient or merely hiding flaky behavior.
 
@@ -207,17 +174,18 @@ On a cache hit:
 - load cached candidates
 - try the highest-confidence candidate first
 - if it works, increase confidence
-- if it fails, record a miss and continue to page scanning
+- if it fails, record a miss and ask Gemini for fresh candidates
 
 On a cache miss:
 
 - scan visible elements
+- send snapshots to Gemini
 - generate locator candidates
 - validate them one by one
 - store the winning candidate
 - persist the updated cache locally
 
-This keeps the system explainable. Every healed locator can be traced back to the candidates that were tried and the reason the selected candidate won.
+Every healed locator can be traced back to the candidates that were tried and the reason the selected candidate won.
 
 ## Why This Helps
 
@@ -255,7 +223,7 @@ For mobile, the same methodology still works, but the scan strategy changes:
 - scan the current viewport
 - scroll in controlled chunks
 - collect accessibility snapshots
-- rank candidates per viewport
+- ask Gemini for candidates per viewport
 - only heal the locator for the intended step
 - do not change the test flow automatically
 
@@ -272,6 +240,12 @@ Install dependencies:
 ```bash
 npm install
 npx playwright install chromium
+```
+
+Set your Gemini key:
+
+```bash
+export GEMINI_API_KEY="your-key"
 ```
 
 Run tests:
@@ -297,7 +271,7 @@ const brokenSeed = {
 };
 ```
 
-The framework scans the page, finds a working replacement locator, clicks the login button, and updates the local cache.
+The framework scans the page, asks Gemini for replacement candidates when needed, clicks the login button, and updates the local cache.
 
 Example result:
 
@@ -315,34 +289,6 @@ Example result:
   "confidence": 0.93,
   "attempted": 3
 }
-```
-
-## Tutorial Video
-
-I also created a short HyperFrames tutorial video in the repo.
-
-The source lives in:
-
-```text
-tutorial/index.html
-tutorial/DESIGN.md
-```
-
-The rendered MP4 lives in:
-
-```text
-tutorial/renders/self-healing-locator-tutorial.mp4
-```
-
-Validation completed with:
-
-```bash
-npm run typecheck
-npm test
-npm run demo
-npm run hyperframes:lint
-npm run hyperframes:inspect
-npm run hyperframes:render
 ```
 
 ## Final Thoughts

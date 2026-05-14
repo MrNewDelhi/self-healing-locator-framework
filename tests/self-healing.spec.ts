@@ -2,13 +2,17 @@ import { expect, test } from "@playwright/test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { LocatorCache, SelfHealingLocator } from "../src/index.js";
+import { DeterministicLocatorGenerator, LocatorCache, SelfHealingLocator } from "../src/index.js";
 import type { LocatorCandidate } from "../src/types.js";
 
 test("heals a stale login button locator on a black-box website", async ({ page }) => {
   const cacheDir = mkdtempSync(join(tmpdir(), "locator-cache-"));
   const cache = new LocatorCache(join(cacheDir, "cache.json"));
-  const healing = new SelfHealingLocator(page, { cache, timeoutMs: 1_000 });
+  const healing = new SelfHealingLocator(page, {
+    cache,
+    timeoutMs: 1_000,
+    generator: new DeterministicLocatorGenerator()
+  });
   const staleLocator: LocatorCandidate = {
     strategy: "css",
     value: "#login-button-before-client-cms-change",
@@ -35,13 +39,21 @@ test("heals a stale login button locator on a black-box website", async ({ page 
 test("uses cache on the second lookup and raises confidence", async ({ page }) => {
   const cacheDir = mkdtempSync(join(tmpdir(), "locator-cache-"));
   const cache = new LocatorCache(join(cacheDir, "cache.json"));
-  const firstPass = new SelfHealingLocator(page, { cache, timeoutMs: 1_000 });
+  const firstPass = new SelfHealingLocator(page, {
+    cache,
+    timeoutMs: 1_000,
+    generator: new DeterministicLocatorGenerator()
+  });
 
   await page.goto("/");
   const first = await firstPass.find("login button");
 
   await page.reload();
-  const secondPass = new SelfHealingLocator(page, { cache, timeoutMs: 1_000 });
+  const secondPass = new SelfHealingLocator(page, {
+    cache,
+    timeoutMs: 1_000,
+    generator: new DeterministicLocatorGenerator()
+  });
   const second = await secondPass.find("login button");
 
   expect(first.healed).toBe(true);

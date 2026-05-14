@@ -3,4 +3,5 @@ dist/
 playwright-report/
 test-results/
 .locator-cache.json
+*.DS_Store
 *.log

@@ -2,7 +2,7 @@ import type { Locator, Page } from "@playwright/test";
 import { LocatorCache } from "./cache/LocatorCache.js";
 import { pageKeyFromUrl } from "./dom/fingerprint.js";
 import { scanVisibleElements } from "./dom/scanPage.js";
-import { HeuristicLocatorGenerator } from "./llm/HeuristicLocatorGenerator.js";
+import { DeterministicLocatorGenerator, GeminiLocatorGenerator } from "./gemini/GeminiLocatorGenerator.js";
 import type { LocatorCandidate, LocatorGenerator, ResolutionResult } from "./types.js";
 
 export class SelfHealingLocator {
@@ -18,7 +18,9 @@ export class SelfHealingLocator {
   async find(targetName: string, seedLocators: LocatorCandidate[] = []): Promise<ResolutionResult> {
     const startedAt = Date.now();
     const cache = this.options.cache ?? new LocatorCache();
-    const generator = this.options.generator ?? new HeuristicLocatorGenerator();
+    const generator = this.options.generator ?? new GeminiLocatorGenerator({
+      fallback: new DeterministicLocatorGenerator()
+    });
     const pageKey = pageKeyFromUrl(this.page.url());
     const cached = cache.get(targetName, pageKey);
     const attemptedCandidates: LocatorCandidate[] = [];
